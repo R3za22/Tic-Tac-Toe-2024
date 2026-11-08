@@ -1,20 +1,41 @@
-# Tic-Tac-Toe (2024)
+# Tic-Tac-Toe
 
-A two-player tic-tac-toe game with editable player names, a move log, win/draw detection and rematch.
+A tic-tac-toe game for two players or against the computer, with a move log, stats history, English and Persian (RTL) support, and light and night themes.
 
-> **Course project.** Built in 2024 while following the project from a React course (React - The Complete Guide, "Tic-Tac-Toe" section). The design and structure come from the course; I typed it through, fixed a file-name casing bug that broke Linux builds, and bundled the fonts locally.
+Credit: the original board was built following the Academind React course, then extended.
 
-**Stack:** React 18, Vite 4, plain CSS.
+## Features
 
-## Run
+- **Modes:** 2 players (pass the phone) or vs computer.
+- **AI levels:** Easy (random moves), Medium (wins when it can, usually blocks), Unbeatable (minimax, never loses). Choose who starts: you, the computer, or random.
+- **Move log:** every move with its position, plus the winning move and line on the result screen.
+- **Stats:** played, won, drawn and lost totals, a filterable game list, and clear history. History and settings are kept in `localStorage`. If the browser blocks storage, the app falls back to in-memory state and shows a warning on the Stats screen.
+- **Settings:** player names, symbol sets, move and win sounds, theme (light, night or system), and language (English or فارسی with RTL layout).
+
+## Scripts
 
 ```sh
 npm install
-npm run dev          # development
-npm run build:demo   # static build to dist-demo/, base path /demos/tic-tac-toe/, with a demo banner
+npm run dev          # development server
+npm run build        # production build to dist/
+npm run lint         # eslint
+npm test             # unit tests (vitest)
+npm run e2e          # end-to-end tests (playwright, starts its own dev server on port 5199)
+npm run build:demo   # static demo build to dist-demo/, base path /demos/tic-tac-toe/, with a demo banner
 ```
 
-## Assets and licences
+The first e2e run needs `npx playwright install chromium`.
 
-- Fonts Caprasimo and Roboto Slab, bundled from Fontsource (SIL OFL 1.1; licence files in `src/assets/fonts/`).
-- `public/game-logo.png`, `bg-pattern*.png` come from the course's starter files.
+## Structure
+
+- `src/App.jsx`: top-level state, game flow, settings and navigation.
+- `src/components/`: screens (Setup, Game, Result, Stats, Settings) and small pieces (MoveLog, Mark, Icons).
+- `src/game/logic.js`: board helpers, winner and draw detection.
+- `src/game/ai.js`: computer move selection for each level.
+- `src/storage.js`: localStorage persistence with an in-memory fallback when storage is blocked.
+- `src/i18n.js`: English and Persian strings.
+- `e2e/`: Playwright flow tests. `src/**/*.test.js`: Vitest unit tests.
+
+## Assets
+
+Fonts are bundled from Fontsource (Bricolage Grotesque and Vazirmatn, SIL Open Font License 1.1).

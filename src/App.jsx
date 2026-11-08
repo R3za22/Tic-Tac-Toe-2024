@@ -1,121 +1,138 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from 'react'
+import Setup from './components/Setup.jsx'
+import Game from './components/Game.jsx'
+import Result from './components/Result.jsx'
+import Stats from './components/Stats.jsx'
+import Settings from './components/Settings.jsx'
+import { IconPlay, IconSettings, IconStats, Logo } from './components/Icons.jsx'
+import { STRINGS, numFmt } from './i18n.js'
+import { createStorage, browserBackend, DEFAULT_SETTINGS } from './storage.js'
+import { boardFromMoves, isDraw, nextPlayer, winnerOf } from './game/logic.js'
+import { chooseMove } from './game/ai.js'
+import { beep } from './sound.js'
 
-import GameBoard from "./components/GameBoard";
-import Player from "./components/player";
-import Log from "./components/Log";
+const AI_DELAY_MS = 450
 
-import { WINNING_COMBINATIONS } from "./winning-combinations.js";
-import GameOver from "./components/GameOver.jsx";
-
-const PLAYERS = {
-  X: "Player 1",
-  O: "Player 2"
+function newGame(setup) {
+  let first = 'X'
+  if (setup.mode === 'ai') first = setup.who === 'computer' ? 'O' : setup.who === 'random' ? (Math.random() < 0.5 ? 'X' : 'O') : 'X'
+  return { mode: setup.mode, level: setup.level, first, moves: [] }
 }
 
-const initialGameBoard = [
-  [null, null, null],
-  [null, null, null],
-  [null, null, null],
-];
-function deriveActivePlayer(gameTurns) {
-  let currentPlayer = "X";
-  if (gameTurns.length > 0 && gameTurns[0].player === "X") {
-    currentPlayer = "O";
+export default function App() {
+  const [storage] = useState(() => createStorage(browserBackend()))
+  const [settings, setSettings] = useState(() => storage.loadSettings())
+  const [history, setHistory] = useState(() => storage.loadHistory())
+  const [view, setView] = useState('play')
+  const [setup, setSetup] = useState({ mode: 'pvp', level: 'medium', who: 'you' })
+  const [phase, setPhase] = useState('setup')
+  const [game, setGame] = useState(null)
+  const [result, setResult] = useState(null)
+  const [scores, setScores] = useState({ X: 0, O: 0, D: 0 })
+  const [round, setRound] = useState(1)
+
+  const t = STRINGS[settings.lang]
+  const num = useMemo(() => numFmt(settings.lang), [settings.lang])
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.lang = settings.lang
+    root.dir = settings.lang === 'fa' ? 'rtl' : 'ltr'
+    if (settings.theme === 'system') root.removeAttribute('data-theme')
+    else root.dataset.theme = settings.theme
+    document.title = settings.lang === 'fa' ? 'دوز' : 'Tic-Tac-Toe'
+  }, [settings.lang, settings.theme])
+
+  const nameOf = (v, def) => (v === DEFAULT_SETTINGS[def === 'defaultX' ? 'nameX' : 'nameO'] ? t[def] : v)
+  const names = { X: nameOf(settings.nameX, 'defaultX'), O: game?.mode === 'ai' ? t.aiName : nameOf(settings.nameO, 'defaultO') }
+
+  function updateSettings(patch) {
+    const next = { ...settings, ...patch }
+    setSettings(next)
+    storage.saveSettings(next)
   }
 
-  return currentPlayer;
-}
-function deriveGameBoard(gameTurns) {
-  let gameBoard = [...initialGameBoard.map((array) => [...array])]; //makes new array with dif memory
-  for (const turn of gameTurns) {
-    const { square, player } = turn;
-    const { row, col } = square;
-    gameBoard[row][col] = player;
+  function commit(moves) {
+    const board = boardFromMoves(moves)
+    const w = winnerOf(board)
+    const draw = !w && isDraw(board)
+    setGame((g) => ({ ...g, moves }))
+    if (settings.sound) beep(w ? 'win' : draw ? 'draw' : moves[moves.length - 1].player.toLowerCase())
+    if (!w && !draw) return
+    const winner = w ? w.player : null
+    storage.addGame({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: Date.now(), mode: game.mode, level: game.mode === 'ai' ? game.level : null,
+      winner, nameX: names.X, nameO: names.O, moves: moves.length,
+    })
+    setHistory(storage.loadHistory())
+    setScores((s) => ({ ...s, [winner ?? 'D']: s[winner ?? 'D'] + 1 }))
+    setResult({ winner: w })
+    setPhase('over')
+  }
+  const latest = useRef()
+  latest.current = { commit }
+
+  const turn = game ? nextPlayer(game.first, game.moves) : 'X'
+  const computerTurn = phase === 'game' && game.mode === 'ai' && turn === 'O'
+  useEffect(() => {
+    if (!computerTurn) return undefined
+    const id = setTimeout(() => {
+      const cell = chooseMove(boardFromMoves(game.moves), 'O', game.level)
+      latest.current.commit([...game.moves, { player: 'O', cell }])
+    }, AI_DELAY_MS)
+    return () => clearTimeout(id)
+  }, [computerTurn, game])
+
+  function start() {
+    setGame(newGame(setup)); setScores({ X: 0, O: 0, D: 0 }); setRound(1); setResult(null); setPhase('game'); setView('play')
+  }
+  function rematch() { setGame(newGame(setup)); setRound((r) => r + 1); setResult(null); setPhase('game') }
+  function restart() { setGame(newGame(setup)) }
+  function toSetup() { setPhase('setup'); setResult(null) }
+  function onCell(cell) {
+    if (phase !== 'game' || computerTurn) return
+    commit([...game.moves, { player: turn, cell }])
+  }
+  function undo() {
+    const moves = game.moves.slice()
+    if (game.mode === 'pvp') moves.pop()
+    else while (moves.length && moves.pop().player !== 'X');
+    setGame({ ...game, moves })
+  }
+  const canUndo = phase === 'game' && !computerTurn && game.moves.some((m) => (game.mode === 'ai' ? m.player === 'X' : true))
+
+  const status = !game ? '' : game.mode === 'ai'
+    ? (turn === 'X' ? t.turn(names.X) : t.thinking)
+    : t.turnOf(names[turn], turn)
+
+  let body
+  if (view === 'stats') {
+    body = <Stats t={t} num={num} lang={settings.lang} history={history} blocked={storage.blocked}
+      onClear={() => { storage.clearHistory(); setHistory([]) }} onPlay={() => setView('play')} />
+  } else if (view === 'settings') {
+    body = <Settings key={settings.lang} t={t} settings={settings} onChange={updateSettings}
+      onSaveNames={(nameX, nameO) => updateSettings({ nameX, nameO })} onDone={() => setView('play')} />
+  } else if (phase === 'setup') {
+    body = <Setup t={t} setup={setup} onChange={(p) => setSetup((s) => ({ ...s, ...p }))} onStart={start} />
+  } else if (phase === 'over') {
+    body = <Result t={t} num={num} game={game} result={result} names={names} set={settings.symbols} round={round} onRematch={rematch} onChangeMode={toSetup} />
+  } else {
+    body = <Game t={t} num={num} game={{ ...game, turn }} names={names} set={settings.symbols} scores={scores} round={round}
+      status={status} thinking={computerTurn} canUndo={canUndo} onCell={onCell} onUndo={undo} onRestart={restart} onBack={toSetup} />
   }
 
-  return gameBoard;
-}
-function deriveWinner(gameBoard, players) {
-  let winner = null;
-
-  for (const combination of WINNING_COMBINATIONS) {
-    const firstSquareSymbol =
-      gameBoard[combination[0].row][combination[0].column];
-    const secondSquareSymbol =
-      gameBoard[combination[1].row][combination[1].column];
-    const thirdSquareSymbol =
-      gameBoard[combination[2].row][combination[2].column];
-
-    if (
-      firstSquareSymbol &&
-      firstSquareSymbol === secondSquareSymbol &&
-      firstSquareSymbol === thirdSquareSymbol
-    ) {
-      winner = players[firstSquareSymbol];
-    }
-  }
-
-  return winner;
-}
-
-function App() {
-  const [players, setPlayers] = useState(PLAYERS);
-  const [gameTurns, setGameTurns] = useState([]);
-
-  const activePlayer = deriveActivePlayer(gameTurns);
-  const gameBoard = deriveGameBoard(gameTurns);
-  const winner = deriveWinner(gameBoard, players);
-  const hasDraw = gameTurns.length === 9 && !winner;
-
-  function handleSelectSquare(rowIndex, colIndex) {
-    setGameTurns((prevTurns) => {
-      let currentPlayer = deriveActivePlayer(prevTurns);
-      const updatedTurns = [
-        { square: { row: rowIndex, col: colIndex }, player: currentPlayer },
-        ...prevTurns,
-      ];
-      return updatedTurns;
-    });
-  }
-
-  function handleRestart() {
-    setGameTurns([]);
-  }
-
-  function handlePlayerNameChange(symbol, newName) {
-    setPlayers((prevPlayers) => {
-      return {
-        ...prevPlayers,
-        [symbol]: newName,
-      };
-    });
-  }
-
+  const navItem = (id, label, Icon) => (
+    <button type="button" className="nav-item" aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)}><Icon />{label}</button>
+  )
   return (
-    <main>
-      <div id="game-container">
-        <ol id="players" className="highlight-player">
-          <Player
-            initialName={PLAYERS.X}
-            symbol="X"
-            isActive={activePlayer === "X"}
-            OnChangeName={handlePlayerNameChange}
-          />
-          <Player
-            initialName={PLAYERS.O}
-            symbol="O"
-            isActive={activePlayer === "O"}
-            OnChangeName={handlePlayerNameChange}
-          />
-        </ol>
-        {(winner || hasDraw) && (
-          <GameOver winner={winner} onRestart={handleRestart} />
-        )}
-        <GameBoard onSelectSquare={handleSelectSquare} board={gameBoard} />
-      </div>
-      <Log turns={gameTurns} />
-    </main>
-  );
+    <div className="app">
+      <header className="topbar">
+        <span className="brand"><Logo />{t.appName}</span>
+      </header>
+      <nav aria-label={t.mainNav} className="nav">
+        {navItem('play', t.play, IconPlay)}{navItem('stats', t.stats, IconStats)}{navItem('settings', t.settings, IconSettings)}
+      </nav>
+      <main>{body}</main>
+    </div>
+  )
 }
-
-export default App;
